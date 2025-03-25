@@ -66,7 +66,7 @@ static struct memstats {
 
 static pthread_key_t mp_pthrd_key;
 
-static FILE *out_file;
+static char *output_file_name;
 
 static void __attribute__ ((constructor)) init(void);
 
@@ -81,7 +81,13 @@ merge_profile(void *void_mprof)
 static void
 save_stats(void)
 {
+	FILE *out_file;
+
 	clock_gettime(CLOCK_REALTIME, &ms.ms_finish);
+
+	out_file = fopen(output_file_name, "w");
+	if (out_file == NULL)
+		return;
 
 	fprintf(out_file, "{\n");
 	fprintf(out_file, "\t\"annotation\" : \"%s\",\n",
@@ -110,6 +116,12 @@ save_stats(void)
 static void
 save_profile_trace(void)
 {
+	FILE *out_file;
+
+	out_file = fopen(output_file_name, "w");
+	if (out_file == NULL)
+		return;
+
 	pthread_key_delete(mp_pthrd_key);
 	/* don't link alloc (free, realloc) ops to chains */
 	mprofile_save(out_file, 0);
@@ -121,6 +133,12 @@ save_profile_trace(void)
 static void
 save_profile_trace_link_chains(void)
 {
+	FILE *out_file;
+
+	out_file = fopen(output_file_name, "w");
+	if (out_file == NULL)
+		return;
+
 	pthread_key_delete(mp_pthrd_key);
 	/* link alloc (free, realloc) ops to chains */
 	mprofile_save(out_file, 1);
@@ -224,17 +242,13 @@ void
 mprofile_start(void)
 {
 	char *mprofile_mode = getenv("MPROFILE_MODE");
-	char *fname = getenv("MPROFILE_OUTF");
 	char  default_mode[2] = { '1', 0 };
 
 	if (mprofile_mode == NULL)
 		mprofile_mode = default_mode;
 
-	if (fname == NULL)
-		return;
-
-	out_file = fopen(fname, "w");
-	if (out_file == NULL)
+	output_file_name = getenv("MPROFILE_OUTF");
+	if (output_file_name == NULL)
 		return;
 
 	switch (*mprofile_mode) {
@@ -475,6 +489,8 @@ mp_CRYPTO_realloc_trace(void *b, unsigned long sz, const char *f, int l)
 		save_mh = *mh;
 	} else {
 		mh = NULL;
+		save_mh.mh_size = 0;
+		save_mh.mh_chk = 0;
 	}
 
 	if (sz == 0)
