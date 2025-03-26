@@ -306,6 +306,11 @@ mp_CRYPTO_malloc_stats(unsigned long sz, const char *f, int l)
 	struct memhdr *mh;
 	void *rv;
 
+	if (sz == 0) {
+		__atomic_add_fetch(&ms.ms_allocs, 1, __ATOMIC_RELAXED);
+		return (NULL);
+	}
+
 	mh = (struct memhdr *) malloc(sz + sizeof (struct memhdr));
 	if (mh != NULL) {
 		mh->mh_size = sz;
@@ -338,7 +343,27 @@ mp_CRYPTO_free_stats(void *b, const char *f, int l)
 		if (chk != mh->mh_chk) {
 			fprintf(stderr, "%p memory corruption detected in %s!",
 			    b, __func__);
-			abort();
+			/*
+			 * typically happens when application uses libc's
+			 * malloc()/strdup().... to allocate buffer and
+			 * OPENSSL_free()/CRYPTO_free() to free it.
+			 *
+			 * The unusual situation happens in sslapitest
+			 * where we load dasync engine. The sslapitest itself
+			 * is linked with static libcrypto/libssl. The test
+			 * loads dasync.so engine which itself pulls libcrypt
+			 * via DT_NEEDED. If allocation happens in dasync.so
+			 * then call is dispatched to libcrypto.so, however
+			 * that libcrypto.so runs _without_ memory profiler.
+			 * The memory profiler for libcrypto.so needs to be
+			 * be preloaded via LD_PREALOAD. And we deliberately
+			 * don't do LD_PRELOAD when profiling ssltestapi
+			 * binary, because the binary uses statatic version of
+			 * libcrypto/libssl. We use memory profiler which is
+			 * built to libtestutil.
+			 */
+			/* abort(); */
+			return;
 		}
 		/* RELAXED should be OK as we don't care about result here */
 		__atomic_add_fetch(&ms.ms_free, 1, __ATOMIC_RELAXED);
@@ -364,7 +389,27 @@ mp_CRYPTO_realloc_stats(void *b, unsigned long sz, const char *f, int l)
 		if (chk != mh->mh_chk) {
 			fprintf(stderr, "%p memory corruption detected in %s!",
 			    b, __func__);
-			abort();
+			/*
+			 * typically happens when application uses libc's
+			 * malloc()/strdup().... to allocate buffer and
+			 * OPENSSL_free()/CRYPTO_free() to free it.
+			 *
+			 * The unusual situation happens in sslapitest
+			 * where we load dasync engine. The sslapitest itself
+			 * is linked with static libcrypto/libssl. The test
+			 * loads dasync.so engine which itself pulls libcrypt
+			 * via DT_NEEDED. If allocation happens in dasync.so
+			 * then call is dispatched to libcrypto.so, however
+			 * that libcrypto.so runs _without_ memory profiler.
+			 * The memory profiler for libcrypto.so needs to be
+			 * be preloaded via LD_PREALOAD. And we deliberately
+			 * don't do LD_PRELOAD when profiling ssltestapi
+			 * binary, because the binary uses statatic version of
+			 * libcrypto/libssl. We use memory profiler which is
+			 * built to libtestutil.
+			 */
+			/* abort(); */
+			return (realloc(b, sz));
 		}
 		save_mh = *mh;
 	} else {
@@ -431,13 +476,17 @@ mp_CRYPTO_malloc_trace(unsigned long sz, const char *f, int l)
 	void *rv;
 	mprofile_t *mp = get_mprofile();
 
-	mh = (struct memhdr *) malloc(sz + sizeof (struct memhdr));
-	if (mh != NULL) {
-		mh->mh_size = sz;
-		mh->mh_chk = (uint64_t)mh ^ sz;
-		rv = (void *)((char *)mh + sizeof (struct memhdr));
-	} else {
+	if (sz == 0) {
 		rv = NULL;
+	} else {
+		mh = (struct memhdr *) malloc(sz + sizeof (struct memhdr));
+		if (mh != NULL) {
+			mh->mh_size = sz;
+			mh->mh_chk = (uint64_t)mh ^ sz;
+			rv = (void *)((char *)mh + sizeof (struct memhdr));
+		} else {
+			rv = NULL;
+		}
 	}
 
 	if (mp != NULL)
@@ -459,7 +508,27 @@ mp_CRYPTO_free_trace(void *b, const char *f, int l)
 		if (chk != mh->mh_chk) {
 			fprintf(stderr, "%p memory corruption detected in %s!",
 			    b, __func__);
-			abort();
+			/*
+			 * typically happens when application uses libc's
+			 * malloc()/strdup().... to allocate buffer and
+			 * OPENSSL_free()/CRYPTO_free() to free it.
+			 *
+			 * The unusual situation happens in sslapitest
+			 * where we load dasync engine. The sslapitest itself
+			 * is linked with static libcrypto/libssl. The test
+			 * loads dasync.so engine which itself pulls libcrypt
+			 * via DT_NEEDED. If allocation happens in dasync.so
+			 * then call is dispatched to libcrypto.so, however
+			 * that libcrypto.so runs _without_ memory profiler.
+			 * The memory profiler for libcrypto.so needs to be
+			 * be preloaded via LD_PREALOAD. And we deliberately
+			 * don't do LD_PRELOAD when profiling ssltestapi
+			 * binary, because the binary uses statatic version of
+			 * libcrypto/libssl. We use memory profiler which is
+			 * built to libtestutil.
+			 */
+			/* abort(); */
+			return;
 		}
 	}
 
@@ -484,7 +553,27 @@ mp_CRYPTO_realloc_trace(void *b, unsigned long sz, const char *f, int l)
 		if (chk != mh->mh_chk) {
 			fprintf(stderr, "%p memory corruption detected in %s!",
 			    b, __func__);
-			abort();
+			/*
+			 * typically happens when application uses libc's
+			 * malloc()/strdup().... to allocate buffer and
+			 * OPENSSL_free()/CRYPTO_free() to free it.
+			 *
+			 * The unusual situation happens in sslapitest
+			 * where we load dasync engine. The sslapitest itself
+			 * is linked with static libcrypto/libssl. The test
+			 * loads dasync.so engine which itself pulls libcrypt
+			 * via DT_NEEDED. If allocation happens in dasync.so
+			 * then call is dispatched to libcrypto.so, however
+			 * that libcrypto.so runs _without_ memory profiler.
+			 * The memory profiler for libcrypto.so needs to be
+			 * be preloaded via LD_PREALOAD. And we deliberately
+			 * don't do LD_PRELOAD when profiling ssltestapi
+			 * binary, because the binary uses statatic version of
+			 * libcrypto/libssl. We use memory profiler which is
+			 * built to libtestutil.
+			 */
+			/* abort(); */
+			return (realloc(b, sz));
 		}
 		save_mh = *mh;
 	} else {
@@ -566,13 +655,17 @@ mp_CRYPTO_malloc_trace_with_stack(unsigned long sz, const char *f, int l)
 	mprofile_stack_t *mps = mprofile_init_stack(stack_buf,
 	    sizeof (stack_buf));
 
-	mh = (struct memhdr *) malloc(sz + sizeof (struct memhdr));
-	if (mh != NULL) {
-		mh->mh_size = sz;
-		mh->mh_chk = (uint64_t)mh ^ sz;
-		rv = (void *)((char *)mh + sizeof (struct memhdr));
-	} else {
+	if (sz == 0) {
 		rv = NULL;
+	} else {
+		mh = (struct memhdr *) malloc(sz + sizeof (struct memhdr));
+		if (mh != NULL) {
+			mh->mh_size = sz;
+			mh->mh_chk = (uint64_t)mh ^ sz;
+			rv = (void *)((char *)mh + sizeof (struct memhdr));
+		} else {
+			rv = NULL;
+		}
 	}
 #ifdef USE_LIBUNWIND
 	collect_backtrace(mps);
@@ -607,7 +700,27 @@ mp_CRYPTO_free_trace_with_stack(void *b, const char *f, int l)
 		if (chk != mh->mh_chk) {
 			fprintf(stderr, "%p memory corruption detected in %s!",
 			    b, __func__);
-			abort();
+			/*
+			 * typically happens when application uses libc's
+			 * malloc()/strdup().... to allocate buffer and
+			 * OPENSSL_free()/CRYPTO_free() to free it.
+			 *
+			 * The unusual situation happens in sslapitest
+			 * where we load dasync engine. The sslapitest itself
+			 * is linked with static libcrypto/libssl. The test
+			 * loads dasync.so engine which itself pulls libcrypt
+			 * via DT_NEEDED. If allocation happens in dasync.so
+			 * then call is dispatched to libcrypto.so, however
+			 * that libcrypto.so runs _without_ memory profiler.
+			 * The memory profiler for libcrypto.so needs to be
+			 * be preloaded via LD_PREALOAD. And we deliberately
+			 * don't do LD_PRELOAD when profiling ssltestapi
+			 * binary, because the binary uses statatic version of
+			 * libcrypto/libssl. We use memory profiler which is
+			 * built to libtestutil.
+			 */
+			/* abort(); */
+			return;
 		}
 	}
 
@@ -635,7 +748,27 @@ mp_CRYPTO_realloc_trace_with_stack(void *b, unsigned long sz, const char *f,
 		if (chk != mh->mh_chk) {
 			fprintf(stderr, "%p memory corruption detected in %s!",
 			    b, __func__);
-			abort();
+			/*
+			 * typically happens when application uses libc's
+			 * malloc()/strdup().... to allocate buffer and
+			 * OPENSSL_free()/CRYPTO_free() to free it.
+			 *
+			 * The unusual situation happens in sslapitest
+			 * where we load dasync engine. The sslapitest itself
+			 * is linked with static libcrypto/libssl. The test
+			 * loads dasync.so engine which itself pulls libcrypt
+			 * via DT_NEEDED. If allocation happens in dasync.so
+			 * then call is dispatched to libcrypto.so, however
+			 * that libcrypto.so runs _without_ memory profiler.
+			 * The memory profiler for libcrypto.so needs to be
+			 * be preloaded via LD_PREALOAD. And we deliberately
+			 * don't do LD_PRELOAD when profiling ssltestapi
+			 * binary, because the binary uses statatic version of
+			 * libcrypto/libssl. We use memory profiler which is
+			 * built to libtestutil.
+			 */
+			/* abort(); */
+			return (realloc(b, sz));
 		}
 		save_mh = *mh;
 	} else {
