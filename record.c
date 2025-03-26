@@ -617,11 +617,12 @@ mprofile_get_annotation(void)
 	annotation_buf[511] = '\0';
 	dst = annotation_buf;
 	while (*src && dst < &annotation_buf[511]) {
-		if (*src == '"')
-			*dst = '\\';
-		else
-			*dst = *src++;
-		dst++;
+		if (*src == '"') {
+			*dst++ = '\\';
+			if (dst < &annotation_buf[511])
+				*dst++ = *src++;
+		} else
+			*dst++ = *src++;
 	}
 
 	return (annotation_buf);
