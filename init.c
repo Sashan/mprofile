@@ -102,11 +102,11 @@ save_stats(void)
 	fprintf(out_file, "\t%s : %"PRIu64",\n", MS_MAX, ms.ms_max);
 	fprintf(out_file, "\t%s : {\n", MS_TSTART);
 	fprintf(out_file, "\t\t%s : %"PRIu64",\n", MS_SEC, ms.ms_start.tv_sec);
-	fprintf(out_file, "\t\t%s : %ld,\n", MS_NSEC, ms.ms_start.tv_nsec);
+	fprintf(out_file, "\t\t%s : %ld\n", MS_NSEC, ms.ms_start.tv_nsec);
 	fprintf(out_file, "\t},\n");
 	fprintf(out_file, "\t%s : {\n", MS_TFINISH);
 	fprintf(out_file, "\t\t%s : %"PRIu64",\n", MS_SEC, ms.ms_finish.tv_sec);
-	fprintf(out_file, "\t\t%s : %ld,\n", MS_NSEC, ms.ms_finish.tv_nsec);
+	fprintf(out_file, "\t\t%s : %ld\n", MS_NSEC, ms.ms_finish.tv_nsec);
 	fprintf(out_file, "\t}\n");
 	fprintf(out_file, "}");
 
