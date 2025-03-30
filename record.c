@@ -253,7 +253,10 @@ profile_save(FILE *f, mprofile_t *mp)
 
 	if (f == NULL)
 		return;
-	
+
+	if (mp == NULL)
+		return;
+
 	fprintf(f, "{ \"start_time\" : {\n");
 	fprintf(f, "\t%s : %lld,\n", MPROFILE_TIME_S,
 	    (long long)start_time_tv.tv_sec);
@@ -292,6 +295,9 @@ void
 mprofile_destroy(mprofile_t *mp)
 {
 	struct mprofile_record *mpr, *walk;
+
+	if (mp == NULL)
+		return;
 
 	TAILQ_FOREACH_SAFE(mpr, &mp->mp_tqhead, mpr_tqe, walk) {
 		TAILQ_REMOVE(&mp->mp_tqhead, mpr, mpr_tqe);
@@ -427,6 +433,12 @@ load_syms(mprofile_t *mp)
 	unsigned int	i;
 	mprofile_stack_t *stack;
 
+	if (mp == NULL)
+		return;
+
+	if (syms != NULL)
+		return;
+
 	stack = mprofile_get_next_stack(mp->mp_stset, NULL);
 	while (stack != NULL) {
 		mprofile_walk_stack(stack, walk_stack, NULL);
@@ -434,9 +446,11 @@ load_syms(mprofile_t *mp)
 	}
 
 	for (i = 0; i < MAX_SHLIBS; i++) {
-		if (shlibs[i].shl_name != NULL)
+		if (shlibs[i].shl_name != NULL) {
+			fprintf(stderr, "%s %s\n", __func__, shlibs[i].shl_name);
 			syms = kelf_open(shlibs[i].shl_name, syms,
 			    shlibs[i].shl_base);
+		}
 	}
 #endif
 }
@@ -456,12 +470,17 @@ build_chains(mprofile_t *mp)
 	struct mprofile_record *mpr, *tree_mpr;
 	struct mprofile_record_mem memtree;
 
+	if (mp == NULL)
+		return;
+
 	RB_INIT(&memtree);
 	memset(&key_mpr, 0, sizeof (struct mprofile_record));
 
 	TAILQ_FOREACH(mpr, &mp->mp_tqhead, mpr_tqe) {
 		switch (mpr->mpr_state) {
 		case ALLOC:
+			if (mpr->mpr_mem == NULL)
+				continue;
 			tree_mpr = RB_INSERT(mprofile_record_mem, &memtree,
 			    mpr);
 			if (tree_mpr != NULL) {
@@ -592,13 +611,18 @@ void
 mprofile_done(void)
 {
 	unsigned int	i;
-
-	for (i = 0; i < MAX_SHLIBS; i++)
+	for (i = 0; i < MAX_SHLIBS; i++) {
 		free(shlibs[i].shl_name);
+		shlibs[i].shl_name = NULL;
+	}
 
 #ifdef	_WITH_STACKTRACE
 	kelf_close(syms);
+	syms = NULL;
 #endif
+
+	mprofile_destroy(master);
+	master = NULL;
 
 	pthread_mutex_destroy(&mtx);
 }
