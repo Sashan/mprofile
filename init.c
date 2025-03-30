@@ -68,6 +68,8 @@ static pthread_key_t mp_pthrd_key;
 
 static char *output_file_name;
 
+static int atexit_set;
+
 static void __attribute__ ((constructor)) init(void);
 
 /* ARGSUSED */
@@ -183,7 +185,10 @@ init_stats(void)
 	CRYPTO_set_mem_functions(mp_CRYPTO_malloc_stats,
 	    mp_CRYPTO_realloc_stats,
 	    mp_CRYPTO_free_stats);
-	atexit(save_stats);
+	if (atexit_set == 0) {
+		atexit(save_stats);
+		atexit_set = 1;
+	}
 }
 
 /*
@@ -196,7 +201,10 @@ init_trace(void)
 	pthread_key_create(&mp_pthrd_key, merge_profile);
 	CRYPTO_set_mem_functions(mp_CRYPTO_malloc_trace,
 	    mp_CRYPTO_realloc_trace, mp_CRYPTO_free_trace);
-	atexit(save_profile_trace);
+	if (atexit_set == 0) {
+		atexit(save_profile_trace);
+		atexit_set = 1;
+	}
 }
 
 static void
@@ -206,7 +214,10 @@ init_trace_with_chains(void)
 	pthread_key_create(&mp_pthrd_key, merge_profile);
 	CRYPTO_set_mem_functions(mp_CRYPTO_malloc_trace,
 	    mp_CRYPTO_realloc_trace, mp_CRYPTO_free_trace);
-	atexit(save_profile_trace_link_chains);
+	if (atexit_set == 0) {
+		atexit(save_profile_trace_link_chains);
+		atexit_set = 1;
+	}
 }
 
 #ifdef _WITH_STACKTRACE
@@ -222,7 +233,10 @@ init_trace_with_stacks(void)
 	CRYPTO_set_mem_functions(mp_CRYPTO_malloc_trace_with_stack,
 	    mp_CRYPTO_realloc_trace_with_stack,
 	    mp_CRYPTO_free_trace_with_stack);
-	atexit(save_profile_trace);
+	if (atexit_set == 0) {
+		atexit(save_profile_trace);
+		atexit_set = 1;
+	}
 }
 
 static void
@@ -233,7 +247,10 @@ init_trace_with_stacks_with_chains(void)
 	CRYPTO_set_mem_functions(mp_CRYPTO_malloc_trace_with_stack,
 	    mp_CRYPTO_realloc_trace_with_stack,
 	    mp_CRYPTO_free_trace_with_stack);
-	atexit(save_profile_trace_link_chains);
+	if (atexit_set == 0) {
+		atexit(save_profile_trace_link_chains);
+		atexit_set = 1;
+	}
 }
 
 #endif
@@ -775,6 +792,12 @@ mp_CRYPTO_realloc_trace_with_stack(void *b, unsigned long sz, const char *f,
 		mh = NULL;
 	}
 
+#ifdef USE_LIBUNWIND
+	collect_backtrace(mps);
+#else
+	_Unwind_Backtrace(collect_backtrace, mps);
+#endif
+
 	if (sz == 0)
 		mprofile_record_free(mp, b, (b == NULL) ? 0 : mh->mh_size, mps);
 
@@ -786,11 +809,6 @@ mp_CRYPTO_realloc_trace_with_stack(void *b, unsigned long sz, const char *f,
 	if (sz == 0)
 		return (b);
 
-#ifdef USE_LIBUNWIND
-	collect_backtrace(mps);
-#else
-	_Unwind_Backtrace(collect_backtrace, mps);
-#endif
 	rv = (void *)((char *)mh + sizeof (struct memhdr));
 	if (mp != NULL) {
 		mh->mh_size = sz;
