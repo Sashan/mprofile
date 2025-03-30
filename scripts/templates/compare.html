@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+
+<head>
+<style>
+    .code { font-family: monospace }
+    .leak-trace-full { display: none }
+    .mem-trace { display: none }
+    #chart { float: none }
+    #mem-traces { float: right; padding-left: 80px; width: 300px }
+    #summary { float: none}
+</style>
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.14.1/themes/base/jquery-ui.css">
+<script src="https://code.jquery.com/jquery-3.7.1.js"></script>
+<script src="https://code.jquery.com/ui/1.14.1/jquery-ui.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+<script>
+    {#
+    this initializes apex chart. it is based on tutorial
+    here:
+	https://www.explo.co/chart-library-tutorials/apexcharts-javascript-tutorial
+    the referene documentaton for apex charts is here:
+	https://www.apexcharts.com/docs
+    #}
+    document.addEventListener("DOMContentLoaded", function(){
+	var chart_opts = {
+	    chart: { 
+		height: 450,
+		width: 900,
+		type: 'line',
+	    },
+	    series: [
+		{% for mp in profiles %}
+		{
+		name: '{{ mp.get_annotation() }}',
+		data: [ {%- for i in mp.get_profile() -%} {{ i }} {%- if not loop.last -%}, {%- endif -%} {%- endfor -%} ]
+                }{%- if not loop.last -%},{%- endif -%}
+		{%- endfor -%}
+	    ],
+	    xaxis: {
+		categories: [ {%- for i in profiles[0].get_profile() -%} {{ loop.index }} {%- if not loop.last -%}, {%- endif -%} {%- endfor -%} ],
+		title: {
+		    text: 'Sample number'
+		}
+	    }
+	}
+
+	var chart = new ApexCharts(document.querySelector("#chart"), chart_opts);
+	chart.render();
+
+	{% for p in profiles %}
+    	var selected_stack_{{ loop.index }} = null;
+	function select_stack_{{ loop.index }}(event, chartContext, opts)
+	{
+	    var stack = document.querySelector("#" + "mem-trace-{{ loop.index }}-" + opts.dataPointIndex);
+	    if (selected_stack_{{ loop.index }} != null)
+		select_stack_{{ loop.index }}.display = 'none';
+	    stack.style.display = 'block';
+	    slect_stack_{{ loop.index }} = stack;
+	}
+	var chart_opts_{{ loop.index }} = {
+	    chart: { 
+		height: 450,
+		width: 900,
+		type: 'line',
+		events: {
+		    dataPointSelection: select_stack_{{ loop.index }} {# add a slect_stack() callback #}
+		}
+	    },
+	    series: [{
+		name: '{{ p.get_annotation() }} Memory Profile',
+		data: [ {%- for i in p.get_profile() -%} {{ i }} {%- if not loop.last -%}, {%- endif -%} {%- endfor -%} ]
+	    }],
+	    xaxis: {
+		categories: [ {%- for i in p.get_time_axis() -%} {{ i }} {%- if not loop.last -%}, {%- endif -%} {%- endfor -%} ],
+		title: {
+		    text: 'Elapsed time in uSecs'
+		}
+	    },
+	    tooltip: {
+		{#
+		we need to set these to get callback working, see 
+		https://www.apexcharts.com/docs/options/chart/events/
+		search for dataPointSelection
+		#}
+		intersect: true,
+		shared: false
+	    },
+	    markers: {
+		size: 1 {# size must be at least 1, to make dataPointSelection wokring. selecting 3 mkes chart rendering to fail ?bug? #}
+	    }
+	};
+
+	var chart_{{ loop.index}} = new ApexCharts(
+	    document.querySelector("#chart_{{ loop.index }}"),
+	    chart_opts_{{ loop.index }});
+	chart_{{ loop.index }}.render();
+	{% endfor %}
+    });
+    $(function() {
+	$("#tabs").tabs();
+    });
+</script>
+<title> {{ title }} </title>
+</head>
+
+<body>
+<div id="tabs">
+    <ul>
+	<li><a href="#main-tab">All versions</a></li>
+	{% for mp in profiles %}
+	<li><a href="#tab-{{ loop.index }}">{{ mp.get_annotation() }}</a></li>
+	{% endfor %}
+    </ul>
+    <div id="main-tab">
+	<div id="chart"></div>
+    </div>
+
+    {% for p in profiles %}
+    {% set profile_loop = loop %}
+    <div id="tab-{{ loop.index }}">
+	<div id="chart_{{ loop.index }}"></div>
+	<div class="mem-trace" id="mem-trace-{{ profile_loop.index }}-0"></div>
+	{% for op in p.all_ops() %}
+	<div class="mem-trace" id="mem-trace-{{ profile_loop.index }}-{{ loop.index }}">
+	    <p>Stack time {{ p.get_time(op) }} us since start</p>
+	    <ul>{% for frame in p.get_stack(op) %}
+		<li><div class="code">{{ frame }}</div></li>
+	    {% endfor %}
+	    </ul>
+	</div>
+	{% endfor %}
+    </div>
+    {% endfor %}
+</div> <!-- tabs !-->
+</body>
+</html>

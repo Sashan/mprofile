@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+
+{#
+ Copyright (c) 2025 <sashan@openssl.org>
+
+ Permission to use, copy, modify, and distribute this software for any
+ purpose with or without fee is hereby granted, provided that the above
+ copyright notice and this permission notice appear in all copies.
+
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#}
+
+<html>
+
+<head>
+<style>
+    .code { font-family: monospace }
+    .leak-trace-full { display: none }
+    .mem-trace { display: none }
+    #chart { float: none }
+    #mem-traces { float: right; padding-left: 80px; width: 300px }
+    #summary { float: none}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+<script>
+    {#
+    remembers stack selected in apex chart so we can hide it
+    when user clicks on another point in chart.
+    #}
+    var selected_stack = null;
+
+    {#
+    shows/hides detailed stack for memory leak.
+    #}
+    function toggle(element_id)
+    {
+	var trace = document.querySelector("#" + element_id);
+	if (trace.style.display == 'none') {
+	    trace.style.display = 'block';
+	} else {
+	    trace.style.display = 'none';
+	}
+    }
+
+    {#
+    select_stack shows/hides a stack trace for selected operation
+    in apex chart.
+    #}
+    function select_stack(event, chartContext, opts)
+    {
+	var stack = document.querySelector("#" + "mem-trace-" + opts.dataPointIndex);
+        if (stack) {
+	    if (selected_stack != null)
+                selected_stack.style.display = 'none'
+            stack.style.display = 'block'
+	    selected_stack = stack;
+        }
+    }
+
+    {#
+    this initializes apex chart. it is based on tutorial
+    here:
+	https://www.explo.co/chart-library-tutorials/apexcharts-javascript-tutorial
+    the referene documentaton for apex charts is here:
+	https://www.apexcharts.com/docs
+    #}
+    document.addEventListener("DOMContentLoaded", function(){
+	var chart_opts = {
+	    chart: { 
+		height: 450,
+		width: 900,
+		type: 'line',
+		events: {
+		    dataPointSelection: select_stack {# add a slect_stack() callback #}
+		}
+	    },
+	    series: [{
+		name: 'Memory Profile',
+		data: [ {%- for i in mp.get_profile() -%} {{ i }} {%- if not loop.last -%}, {%- endif -%} {%- endfor -%} ]
+	    }],
+	    xaxis: {
+		categories: [ {%- for i in mp.get_time_axis() -%} {{ i }} {%- if not loop.last -%}, {%- endif -%} {%- endfor -%} ],
+		title: {
+		    text: 'Elapsed time in uSecs'
+		}
+	    },
+	    tooltip: {
+		{#
+		we need to set these to get callback working, see 
+		https://www.apexcharts.com/docs/options/chart/events/
+		search for dataPointSelection
+		#}
+		intersect: true,
+		shared: false
+	    },
+	    markers: {
+		size: 1 {# size must be at least 1, to make dataPointSelection wokring. selecting 3 mkes chart rendering to fail ?bug? #}
+	    }
+	}
+
+	var chart = new ApexCharts(document.querySelector("#chart"), chart_opts);
+	chart.render();
+    });
+</script>
+<title> {{ title }} </title>
+</head>
+
+<body>
+    <h1>{{ title }}</h1>
+    <div id="top">
+	{#
+	div here contains stack traces for all memory operations.
+	each stack trace is shown after user clicks/selects data
+	point in chart.
+	#}
+	<div id="mem-traces">
+	    {#
+	    Need to add empty stack trace for point zero (start of application
+	    #}
+	    <div class="mem-trace" id="mem-trace-0"></div>
+	    {% for op in mp.all_ops() %}
+	    {#
+	    stack trace is identified by mem-trace-xx, so javascript
+	    can easily select what to show/hide. the loop.index counts
+	    from 1.
+	    #}
+	    <div class="mem-trace" id="mem-trace-{{ loop.index }}">
+		<p>Stack time {{ mp.get_time(op) }} us since start</p>
+		<ul>{% for frame in mp.get_stack(op) %}
+		    <li><div class="code">{{ frame }}</div></li>
+		{% endfor %}
+		</ul>
+	    </div>
+	    {% endfor %}
+	</div>
+	{#
+	in div element here we render chart.
+	#}
+	<div id="chart"></div>
+    </div>
+
+    <div id="summary">
+	{#
+	div/section here comes with summary. we have just total number of allocations,
+	by default. We can add some more like elapsed time average allocation for
+	each operation etc.
+	#}
+	<p>
+	    {{ mp.get_total_mem() }} bytes of memory allocated in {{ mp.get_total_allocs() }} operations.
+	</p>
+	{#
+	section leaks is present only when memory leaks are detected.
+	#}
+	{% for leak in mp.leaks() %}
+	<div id="leaks">
+	    {% if loop.first %}
+	    <h1>{%- if leak_count == 1 -%} Leak found {%- else -%} {{ leak_count }} Leasks found {%- endif -%}, {{ lost_bytes }} B  got lost </h1>
+            {% endif %}
+		<h2>Leak {{ loop.index }} is {{ mp.get_leak_sz(leak) }} bytes long. </h2>
+		<ul>{% for op in mp.get_chain(leak) %}
+		    <li class="leak-trace-button" id="leak-{{ leak.id }}-{{ op.id }}" onclick="toggle('show-leak-{{ leak.id }}-{{ op.id }}')">
+			<div class="leak-trace" id="ref-leak-{{ leak.id }}-{{ op.id }}">
+			    <div class="code">{{ MR(op).get_operation() }}({{ MR(op).get_delta_sz() }}) at {{ mp.get_time(op) }}</div>
+			</div>
+			<div class="leak-trace-full" id="show-leak-{{ leak.id }}-{{ op.id }}">
+			    <ul>{% for frame in mp.get_stack(op) %}
+				<li><div class="code">{{ frame }}</div></li>
+				{% endfor %}
+			    </ul>
+			</div>
+			{% endfor %}
+		    </li>
+		</ul>
+	</div><!--- "leaks" --->
+	{% endfor %}
+    </div><!--- "summary" --->
+</body>
+</html>
