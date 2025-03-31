@@ -129,7 +129,7 @@ kelf_open(const char *filename, struct syms *syms, unsigned long base)
 		symtab_size += syms->nsymb;
 	}
 
-	for (i = syms->nsymb; i < symtab_size; i++) {
+	for (i = 0; i < symtab_size; i++) {
 		if (gelf_getsym(data, i, &sym) == NULL)
 			continue;
 		if (GELF_ST_TYPE(sym.st_info) != STT_FUNC)
