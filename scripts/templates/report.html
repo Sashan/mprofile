@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+
+<head>
+<style>
+</style>
+<script src="https://code.jquery.com/jquery-3.7.1.js"></script>
+<script src="https://code.jquery.com/ui/1.14.1/jquery-ui.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+<script>
+    {#
+    this initializes apex chart. it is based on tutorial
+    here:
+	https://www.explo.co/chart-library-tutorials/apexcharts-javascript-tutorial
+    the referene documentaton for apex charts is here:
+	https://www.apexcharts.com/docs
+    #}
+    document.addEventListener("DOMContentLoaded", function(){
+	var chart_opts = {
+	    chart: { 
+		height: 450,
+		width: 900,
+		type: 'line',
+	    },
+	    series: [
+		{
+		name: '{{ mp.get_annotation() }}',
+		data: [ {%- for i in mp.get_profile() -%} {{ i }} {%- if not loop.last -%}, {%- endif -%} {%- endfor -%} ]
+	    }],
+	    xaxis: {
+		categories: [ {%- for i in mp.get_profile() -%} {{ loop.index }} {%- if not loop.last -%}, {%- endif -%} {%- endfor -%} ],
+		title: {
+		    text: 'Sample number'
+		}
+	    }
+	}
+
+	var chart = new ApexCharts(document.querySelector("#chart"), chart_opts);
+	chart.render();
+    });
+</script>
+<title> {{ title }} </title>
+</head>
+
+<body>
+<div id="main-tab">
+    <div id="chart"></div>
+</div>
+
+<div id="profile">
+</div>
+</body>
+</html>

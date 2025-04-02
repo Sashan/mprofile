@@ -53,9 +53,9 @@
 	{
 	    var stack = document.querySelector("#" + "mem-trace-{{ loop.index }}-" + opts.dataPointIndex);
 	    if (selected_stack_{{ loop.index }} != null)
-		select_stack_{{ loop.index }}.display = 'none';
+		selected_stack_{{ loop.index }}.style.display = 'none';
 	    stack.style.display = 'block';
-	    slect_stack_{{ loop.index }} = stack;
+	    selected_stack_{{ loop.index }} = stack;
 	}
 	var chart_opts_{{ loop.index }} = {
 	    chart: { 
@@ -113,12 +113,38 @@
     </ul>
     <div id="main-tab">
 	<div id="chart"></div>
+	<div class="details">
+	{% if script %}
+	<div class="code">
+	<h1>Program/script used to obtain profile</h1>
+	<pre>
+{{ script }}
+	</pre>
+	</div>
+	{% endif %}
+	</div>
     </div>
 
     {% for p in profiles %}
     {% set profile_loop = loop %}
     <div id="tab-{{ loop.index }}">
 	<div id="chart_{{ loop.index }}"></div>
+	<div class="details">
+	    <table>
+		<tr>
+		    <td>Number of allocations:</td><td>{{ p.get_total_allocs() }}</td>
+		</tr>
+		<tr>
+		    <td>Total bytes allocated:</td><td>{{ p.get_total_mem() }}</td>
+		</tr>
+		<tr>
+		    <td>Max mem used:</td><td>{{ p.get_max_peak() }}</td>
+		</tr>
+		<tr>
+		    <td>Largest buffer:</td><td>{{ p.get_max_buf() }}</td>
+		</tr>
+	    </table>
+	</div>
 	<div class="mem-trace" id="mem-trace-{{ profile_loop.index }}-0"></div>
 	{% for op in p.all_ops() %}
 	<div class="mem-trace" id="mem-trace-{{ profile_loop.index }}-{{ loop.index }}">

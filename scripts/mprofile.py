@@ -19,6 +19,13 @@
 import json
 import argparse
 from jinja2 import Environment, FileSystemLoader
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+app: FastAPI = FastAPI()
+templates = Jinja2Templates(directory="templates")
 
 #
 # Functions here create 'API' between .json data which
@@ -202,6 +209,17 @@ class MProfile:
 		    lambda x: True if is_realloc(x) and get_addr(x) == 0 and \
 			get_size(x) > 0 else False, self._mem_records)
 
+	def get_free_op(self, mr):
+		next_mr = self.get_mr(get_nextid(mr))
+		while next_mr != None:
+			mr = next_mr
+			next_mr = self.get_mr(get_nextid(mr))
+
+		if mr != None and is_free(mr):
+			return mr
+		else:
+			return None
+			
 	def is_leak(self, mr):
 		if not is_alloc(mr):
 			return False
@@ -356,6 +374,14 @@ class MProfile:
 		return max(self._mem_records,
 		    key = lambda k : get_mem_current(k))	
 
+	def get_max_peak(self):
+		return get_mem_current(self.get_mem_peak())
+		
+	def get_max_buf(self):
+		op = max(self._mem_records,
+		    key = lambda k : get_delta_sz(k))	
+		return get_delta_sz(op)
+
 	def samples(self, samples_count):
 		slice_size = int(len(self._mem_records)/samples_count)
 		if slice_size == 0:
@@ -378,6 +404,40 @@ class MProfile:
 	def get_annotation(self):
 		return self._annotation
 
+	#
+	# return list of memory buffers which
+	# are still alive w.r.t. `op`. The `op`
+	# serves as a time marker.
+	#
+	def live_memory(self, op):
+		allocations = filter(lambda x: \
+		    True if get_id(x) < get_id(op) else False,
+		    self.get_allocations())
+		live_allocs = []
+		for a in allocations:
+			f = get_free_op(self, a)
+			#
+			# if free operation happens after
+			# op, then  memory allocated by
+			# `a` is still alive w.r.t. `op`
+			if get_id(f) > get_id(op):
+				live_allocations.append(a)
+			
+		return live_allocations
+
+	def get_live_chain(self, alloc_op, point_op):
+		chain = [alloc_op]
+		next_op = get_nextid(alloc_op)
+		while next_op != None and get_id(next_op) < get_id(point_op):
+			chain.append(next_op)
+			next_op = get_nextid(next_op)
+		return chain
+
+	def get_live_sz(self, alloc_op, point_op):
+		live_chain = get_live_chain(self, alloc_op, point_op)
+		return sum(map(get_delta_sz, live_chain))
+
+
 def create_parser():
 	parser = argparse.ArgumentParser()
 	parser.add_argument("json_files",
@@ -389,15 +449,15 @@ def create_parser():
 	    action = "store_true")
 	parser.add_argument("-a", "--allocated", help = "report all memory allocated",
 	    action = "store_true")
-	parser.add_argument("-o", "--output", help = "write report to html",
-	    nargs = 1)
 	parser.add_argument("-t", "--title", help = "report title",
 	    default = "Memory Profile")
 	parser.add_argument("-m", "--max", help = "report max mem usage",
 	    action = "store_true")
-	parser.add_argument("-r", "--samples",
-	    help = "reduce the set of events for html output",
-	    default = "0")
+	parser.add_argument("-s", "--server",
+	    help = "serve .html on http://localhost:8000",
+	    action = "store_true")
+	parser.add_argument("-f", "--file",
+	    help = "file with script used to obtain data"),
 	parser.add_argument("-c", "--check",
 	    help = "check the source data and report errors",
 	    default = "store_true")
@@ -429,23 +489,44 @@ def report_mem_total(mp, parser_args):
 	    mp.get_total_mem(), mp.get_total_allocs()))
 	return
 
-def report_to_html(mp, parser_args):
-	e = Environment(loader = FileSystemLoader("templates/"))
-	t = e.get_template("mprofile.html")
+profiles = None
+parser_args = None
 
-	if (int(args.samples) > 0):
-		mp.samples(int(args.samples))
+@app.get("/", response_class = HTMLResponse)
+def html_report(request: Request):
+	t = Jinja2Templates(directory="templates")
+	global parser_args
+	global profiles
+	if (len(profiles) == 1):
+		context = {
+			"title" : parser_args.title,
+			"mp" : profiles[0],
+			"MR" : MR,
+			"leak_count" : len(profiles[0].leaks()),
+			"lost_bytes" : sum(map(\
+			    lambda x: profiles[0].get_leak_sz(x), \
+			    profiles[0].leaks()))
+		}
+		return t.TemplateResponse(request = request, \
+		    name = "report.html", context = context)
+	else:
+		context = {
+			"title" : parser_args.title,
+			"profiles" : profiles,
+			"MR" : MR,
+			"script" : parser_args.file,
+		}
+		return t.TemplateResponse(request = request, \
+		    name = "compare.html", context = context)
 
-	context = {
-		"title" : parser_args.title,
-		"mp" : mp,
-		"MR" : MR,
-		"leak_count" : len(mp.leaks()),
-		"lost_bytes" : sum(map(lambda x: mp.get_leak_sz(x), mp.leaks()))
-	}
-	f = open(parser_args.output[0], mode = "w", encoding = "utf-8")
-	f.write(t.render(context))
-	f.close()
+
+def launch_server(args):
+	global parser_args
+	parser_args = args
+	for p in profiles:
+		p.samples(100)
+
+	uvicorn.run(app)
 
 if __name__ == "__main__":
 	parser = create_parser()
@@ -453,35 +534,22 @@ if __name__ == "__main__":
 	if args.json_files == None:
 		parser.usage()
 
-	if len(args.json_files) == 1:
-		j = json.load(open(args.json_file))
-		mp = MProfile(j)
+	profiles = [ MProfile(json.load(open(f))) for f in args.json_files ]
+	e = Environment(loader = FileSystemLoader("templates/"))
+	t = e.get_template("compare.html")
 
-		if args.check == True:
-			mp.check()
+	if args.check == True:
+		for p in profile:
+			p.check()
 
-		if args.output:
-			report_to_html(mp, args)
-		else:
-			if args.allocated:
-				report_mem_total(mp, args)
-
-			if args.leaks:
-				report_leaks(mp, args)
-
-			if args.max:
-				print(get_mem_current(mp.get_mem_peak()))
+	if args.server:
+		launch_server(args)
 	else:
-		profiles = [ MProfile(json.load(open(f))) for f in args.json_files ]
-		for p in profiles:
-			p.samples(int(args.samples))
-		e = Environment(loader = FileSystemLoader("templates/"))
-		t = e.get_template("compare.html")
-		context = {
-			"title" : args.title,
-			"profiles" : profiles,
-			"MR" : MR,
-	}
-	f = open(args.output[0], mode = "w", encoding = "utf-8")
-	f.write(t.render(context))
-	f.close()
+		if args.allocated:
+			report_mem_total(mp, args)
+
+		if args.leaks:
+			report_leaks(mp, args)
+
+		if args.max:
+			print(get_mem_current(mp.get_mem_peak()))
