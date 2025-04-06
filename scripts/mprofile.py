@@ -21,11 +21,25 @@ import argparse
 from jinja2 import Environment, FileSystemLoader
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 
+#
+# returns elements 1, 2, 3, 4
+#
+def json_list_filter(iterable):
+	rv = ""
+	for it in iterable[: -1]:
+		rv = rv + str(it) + ", "
+
+	rv = rv + str(iterable[-1])
+
+	return rv
+
 app: FastAPI = FastAPI()
+
 templates = Jinja2Templates(directory="templates")
+templates.env.filters["json_list"] = json_list_filter
 
 #
 # Functions here create 'API' between .json data which
@@ -136,6 +150,9 @@ class MR:
 	def get_operation(self):
 		return get_operation(self._mr)
 
+	def get_mem_current(self):
+		return get_mem_current(self._mr)
+
 class MProfile:
 	#
 	# traverse allocation chain back to the first operation
@@ -156,9 +173,56 @@ class MProfile:
 			set_mem_current(mr, mem_current)
 
 				
-	def __create_profile(self):
-		return list(map(get_mem_current, self._mem_records))
+	def __create_profile(self, mem_records):
+		return list(map(get_mem_current, mem_records))
 
+	def __get_slice(self, min_id = -1, max_id = -1):
+		def with_start_time():
+			#
+			# The allocation never happens at start time (time
+			# zero).  To plot a chart starting at time zero we
+			# create a zero allocation record at start time.
+			#
+			mem_records = [
+				{
+					"id": 0,
+					"addr" : 0,
+					"realloc": 0,
+					"delta_sz": 0,
+					"mem_current": 0,
+					"state": "allocated",
+					"next_id": 0,
+					"prev_id": 0,
+					"stack_id": 0,
+					"timme": self._start_time
+				}
+			]
+			mem_records = mem_records + self._mem_records
+			return mem_records
+		try:
+			if min_id == -1 and max_id == -1:
+				return with_start_time()
+			elif min_id < max_id:
+				if min_id == -1:
+					return with_start_time()
+				else:
+					rv = self._mem_records[min_id : max_id]
+					return rv
+			elif max_id == -1:
+				return self._mem_records[min_id : ]
+			else:
+				return [] # or None, don't know what's better
+		except IndexError:
+			return [] # or None, don't know what's better
+
+	def __get_samples(self, mem_records):
+		slice_size = int(len(mem_records)/self._sample_sz)
+		if slice_size == 0:
+			return mem_records
+		mem_records_slices = [ self._mem_records[i : i + slice_size ]
+		    for i in range(0, len(mem_records), slice_size) ]
+		return map(lambda x: max(x,\
+		    key = lambda k : get_mem_current(k)), mem_records_slices)
 	#
 	# retrieve a record chain for allocation record ar.
 	#
@@ -176,7 +240,13 @@ class MProfile:
 	#	allocations (list of memory records (operations)
 	#	stacks list of stack traces
 	#
-	def __init__(self, json_data):
+	# samples is the number of data samples we are going to present in
+	# .html/www output.  We can expect ~1M of alloc/free/realloc records
+	# in .json data. It's hard to present 1M of stacktraces or data points
+	# in javascript charts. Therefore we only present a sample from entire
+	# set.
+	#
+	def __init__(self, json_data, sample_sz = 100):
 		self._leaks = None
 		self._mem_records = json_data["allocations"]
 		for mr in self._mem_records:
@@ -187,9 +257,9 @@ class MProfile:
 		# we need to sort the array/list by 'id'
 		#
 		self._stacks.sort(key = lambda x : x["id"])
-		self._start_time = time_to_float(json_data["start_time"])
+		self._start_time = json_data["start_time"]
 		self.__calc_current()
-		self._samples = None
+		self._sample_sz = sample_sz
 		self._annotation = json_data["annotation"]
 
 	#
@@ -281,10 +351,7 @@ class MProfile:
 		    self._mem_records)
 
 	def all_ops(self):
-		if self._samples != None:
-			return self._samples
-		else:
-			return self._mem_records
+		return self._mem_records
 
 	#
 	# get memory record for given id. returns None when
@@ -344,31 +411,91 @@ class MProfile:
 	# at exact point of application lifetime
 	#
 	def get_profile(self):
-		mem_records = None
-		if self._samples == None:
-			mem_records = self._mem_records
-		else:
-			mem_records = self._samples
+		return [ 0 ] + list(map(lambda mr: get_mem_current(mr),\
+		    self.__get_samples(self.__get_slice())))
 
-		return [ 0 ] + \
-		    list(map(lambda mr: get_mem_current(mr), mem_records))
+	def get_profile_id(self):
+		return [ 0 ] + list(map(lambda mr: get_id(mr),
+		    self.__get_samples(self.__get_slice())))
 
+	def get_time_axis(self, mem_records_it = None):
+		if mem_records_it == None:
+			mem_records_it = self.__get_samples(self._mem_records)
 
-	def get_time_axis(self):
 		t = [ float(0) ]
-		mem_records = None
-		if self._samples == None:
-			mem_records = self._mem_records
-		else:
-			mem_records = self._samples
-
-		for mr in mem_records:
-			t.append((get_timef(mr) - self._start_time) * 1000000)
+		for mr in mem_records_it:
+			t.append((get_timef(mr) - \
+			    time_to_float(self._start_time)) * 1000000)
 
 		return t
 
-	def get_time(self, mr):
-		return (get_timef(mr) - self._start_time) * 1000000
+	def get_profile_json(self, min_id = -1, max_id = -1):
+		mem_records_slice = self.__get_slice(min_id, max_id)
+		mem_records_it = self.__get_samples(mem_records_slice)
+
+		#
+		# __get_samples() returns map iterator. To instatiate a list
+		# from iterator one does: list(samples_it)
+		#
+		rv = {
+			"profile" : list(mem_records_it),
+			"xxaxis" : self.get_time_axis(mem_records_it)
+		}
+		return rv
+
+	def get_top_memory(self, min_id = -1, max_id = -1):
+		mem_records_slice = self.__get_slice(min_id, max_id)
+		mrecord = max(mem_records_slice,\
+		    key = lambda k: get_mem_current(k))
+		rv = {
+			"top_memory_sz" : get_mem_current(mrecord)
+		}
+		return rv
+
+	def get_top_alloc(self, min_id = -1, max_id = -1):
+		mem_records_slice = self.__get_slice(min_id, max_id)
+		mrecord = max(mem_records_slice,\
+		    key = lambda k: get_delta_sz(k))
+		stack_trace = None
+
+		if get_delta_sz(rv) < 1:
+			return None
+
+		rv = {
+		    "top_record_sz" : get_delta_sz(rv),
+		    "top_record_time" : get_timef(rv) - self._start_time,
+		    "top_record_stack" : self._stacks[get_stackid(mr)]["stack_trace"]
+		}
+		try:
+			stack_trace = self._stacks[get_stackid(mr)]
+			rv["top_record_stack"] = stack_trace["stack_record_trace"]
+		except KeyError:
+			rv["top_record_stack"] = []
+
+		return rv
+
+	def get_top_free(self, min_id = -1, max_id = -1):
+		mem_records_slice = self.__get_slice(min_id, max_id)
+		mrecord = min(mem_records_slice,\
+		    key = lambda k: get_delta_sz(k))
+		stack_trace = None
+
+		if get_delta_sz(rv) > -1:
+			return None
+
+		rv = {
+		    "top_record_sz" : get_delta_sz(rv),
+		    "top_record_time" : get_timef(rv) - self._start_time,
+		    "top_record_stack" : self._stacks[get_stackid(mr)]["stack_trace"]
+		}
+		try:
+			stack_trace = self._stacks[get_stackid(mr)]
+			rv["top_record_stack"] = stack_trace["stack_trace"]
+		except KeyError:
+			rv["top_record_stack"] = []
+
+		return rv
+
 
 	def get_mem_peak(self):
 		return max(self._mem_records,
@@ -382,16 +509,19 @@ class MProfile:
 		    key = lambda k : get_delta_sz(k))	
 		return get_delta_sz(op)
 
-	def samples(self, samples_count):
-		slice_size = int(len(self._mem_records)/samples_count)
-		if slice_size == 0:
-			self._samples = None
-			return
-		mem_slices = [ self._mem_records[i : i + slice_size ]
-		    for i in range(0, len(self._mem_records), slice_size) ]
-		self._samples = list(map(
-		    lambda x: max(x, key = lambda k : get_mem_current(k)),
-		    mem_slices))
+	def get_stack_json(self, record_id):
+		stack_trace = None
+		try:
+			mr = self._mem_records[record_id]
+			stack = self._stacks[get_stackid(mr)]
+			stack_trace = stack["stack_trace"]
+		except (IndexError, KeyError):
+			stack_trace = []
+
+		rv = {
+			"record_stack" : stack_trace
+		}
+		return rv
 
 	def check(self):
 		test = 1
@@ -436,6 +566,9 @@ class MProfile:
 	def get_live_sz(self, alloc_op, point_op):
 		live_chain = get_live_chain(self, alloc_op, point_op)
 		return sum(map(get_delta_sz, live_chain))
+
+	def get_time(self, mp):
+		return (get_timef(mp) - self._start_time) * 1000000
 
 
 def create_parser():
@@ -495,6 +628,7 @@ parser_args = None
 @app.get("/", response_class = HTMLResponse)
 def html_report(request: Request):
 	t = Jinja2Templates(directory="templates")
+	t.env.filters["json_list"] = json_list_filter
 	global parser_args
 	global profiles
 	if (len(profiles) == 1):
@@ -519,16 +653,56 @@ def html_report(request: Request):
 		return t.TemplateResponse(request = request, \
 		    name = "compare.html", context = context)
 
+@app.get("/favicon.ico", response_class = FileResponse)
+def favicon():
+	return FileResponse("www-resources/favicon.ico")
 
+@app.get("/get_mprofile/{profile_id}/{min_id}/{max_id}")
+def get_mprofile(profile_id, min_id = -1, max_id = -1):
+	if profile_id < 0 or len(profiles) < profile_id:
+		return { 'mprofile' : [], "xaxxis": [] }
+
+	mp = profiles[profile_id]
+	return mp.get_mprofile(min_id, max_id)
+
+@app.get("/get_max_mem/{profile_id}/{min_id}/{max_id}")
+def get_max_mem(profile_id, min_id = -1, max_id = -1):
+	if profile_id < 0 or len(profiles) < profile_id:
+		return { 'mprofile' : [], "xaxxis": [] }
+
+	mp = profiles[profile_id]
+	return mp.get_maxmem(min_id, max_id)
+
+@app.get("/get_top_alloc/{profile_id}/{min_id}/{max_id}")
+def get_top_alloc(profile_id, min_id = -1, max_id = -1):
+	if profile_id < 0 or len(profiles) < profile_id:
+		return { 'top_record' : None }
+	mp = profiles[profile_id]
+	return mp.get_top_alloc(min_id, max_id)
+
+@app.get("/get_top_free/{profile_id}/{min_id}/{max_id}")
+def get_top_free(profile_id, min_id = -1, max_id = -1):
+	if profile_id < 0 or len(profiles) < profile_id:
+		return { 'top_record' : None }
+	mp = profiles[profile_id]
+	return mp.get_top_free(min_id, max_id)
+
+@app.get("/get_stack/{profile_id}/{record_id}")
+def get_stack(profile_id, record_id):
+	profile_id = int(profile_id)
+	if profile_id < 0 or len(profiles) < profile_id:
+		return { 'record_stack' : [] }
+	mp = profiles[profile_id]
+	return mp.get_stack_json(int(record_id))
+	
 def launch_server(args):
 	global parser_args
 	parser_args = args
-	for p in profiles:
-		p.samples(100)
-
 	uvicorn.run(app)
 
 if __name__ == "__main__":
+	e = Environment()
+	e.filters["json_list"] = json_list_filter
 	parser = create_parser()
 	args = parser.parse_args()
 	if args.json_files == None:

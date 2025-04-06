@@ -57,13 +57,19 @@
 	    stack.style.display = 'block';
 	    selected_stack_{{ loop.index }} = stack;
 	}
+	function zoomed_{{ loop.index }}(event, { xaxis, yaxis })
+	{
+		alert("Zooming");
+	}
+
 	var chart_opts_{{ loop.index }} = {
 	    chart: { 
 		height: 450,
 		width: 900,
 		type: 'line',
 		events: {
-		    dataPointSelection: select_stack_{{ loop.index }} {# add a slect_stack() callback #}
+		    dataPointSelection: select_stack_{{ loop.index }}, {# add a slect_stack() callback #}
+		    zoomed: zoomed_{{ loop.index }} {# add a slect_stack() callback #}
 		}
 	    },
 	    series: [{
